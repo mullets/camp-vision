@@ -38,7 +38,9 @@ import argparse
 import json
 import logging
 import os
+import shutil
 import sys
+import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -54,6 +56,7 @@ from database.models import criar_engine, criar_sessao
 from exportacao.exportador import Exportador
 from ocr.motor import criar_motor_ocr
 from scanner.detector_carimbo import criar_detector
+from scanner.leitor_imagem import RESOLUCAO_MINIMA_PIXELS_SEM_DPI
 from scanner.lote import ConfiguracaoLote, ProcessadorLote
 
 # Mesmos nomes de pasta definidos no padrão CAMP (ver sistema_windows.py,
@@ -61,6 +64,7 @@ from scanner.lote import ConfiguracaoLote, ProcessadorLote
 # projetos, já que são bases de código separadas.
 SERIE_PADRAO = "01 - Desenhos e Pranchas"
 TIPO_PREVIEW = "03 - Preview (JPG)"
+TIPO_ARQUIVISTICO = "01 - Arquivo Arquivístico (TIFF)"
 
 ETAPA_ENTRADA = "enviado_windows"
 ETAPA_SAIDA = "campvision_concluido"
@@ -230,6 +234,71 @@ def listar_projetos_pendentes(qnap_acervos_path: Path) -> list[Path]:
 # PROCESSAMENTO DE UM PROJETO
 # ============================================================================
 
+def _preparar_pasta_processamento(pasta_projeto: Path, pasta_jpg: Path) -> tuple[Path, list[str]]:
+    """Monta uma pasta TEMPORÁRIA de trabalho com um link simbólico por
+    prancha — normalmente apontando pro JPG, mas trocado pelo TIFF de
+    preservação correspondente quando o JPG está abaixo do piso de
+    resolução que o próprio motor do CAMP Vision já usa para decidir se
+    vale soltar o aviso de 'resolução possivelmente baixa'.
+
+    Por quê: os JPGs desta estação já saem reduzidos a 1/3 da resolução
+    do TIFF original (ver sistema_windows.py) e sem DPI gravado — então
+    batem nesse piso quase sempre para pranchas fisicamente menores.
+    Quando isso acontece, sabemos exatamente onde está o TIFF de
+    altíssima qualidade da mesma prancha (mesmo nome, na pasta irmã
+    '01 - Arquivo Arquivístico (TIFF)') — então usamos ele só para
+    ESTA análise, sem nunca copiar (200MB+ cada) nem tocar no arquivo
+    original de nenhum dos dois lados. A pasta retornada é só links
+    simbólicos e deve ser apagada depois de usar (ver `finally` em
+    `processar_projeto`).
+
+    Retorna (pasta_temporaria, lista_de_avisos_para_log)."""
+    pasta_tif = pasta_projeto / SERIE_PADRAO / TIPO_ARQUIVISTICO
+    pasta_temp = Path(tempfile.mkdtemp(prefix="campvision_prep_"))
+    avisos = []
+
+    for jpg in sorted(pasta_jpg.glob("*.jpg")) + sorted(pasta_jpg.glob("*.jpeg")):
+        origem = jpg
+        motivo = ""
+        try:
+            from PIL import Image
+            with Image.open(jpg) as img:
+                largura, altura = img.size
+            if min(largura, altura) < RESOLUCAO_MINIMA_PIXELS_SEM_DPI:
+                candidato_tif = None
+                for ext in (".tif", ".tiff"):
+                    possivel = pasta_tif / (jpg.stem + ext)
+                    if possivel.exists():
+                        candidato_tif = possivel
+                        break
+                if candidato_tif is not None:
+                    origem = candidato_tif
+                    motivo = (
+                        f"{jpg.name}: JPG com {largura}x{altura}px (abaixo do piso de "
+                        f"{RESOLUCAO_MINIMA_PIXELS_SEM_DPI}px) — usando o TIFF original "
+                        f"({candidato_tif.name}) só para esta análise."
+                    )
+                else:
+                    motivo = (
+                        f"{jpg.name}: JPG com {largura}x{altura}px (abaixo do piso de "
+                        f"{RESOLUCAO_MINIMA_PIXELS_SEM_DPI}px), mas não achei o TIFF "
+                        f"correspondente em '{TIPO_ARQUIVISTICO}' — seguindo com o JPG mesmo."
+                    )
+        except Exception as exc:
+            motivo = f"{jpg.name}: não consegui checar a resolução ({exc}) — seguindo com o JPG."
+
+        if motivo:
+            avisos.append(motivo)
+
+        # O link fica com o MESMO nome-base do JPG (só muda a extensão
+        # quando vira TIFF) — assim o resultado exportado continua
+        # identificável com o padrão CAMP já usado no nome do arquivo.
+        destino = pasta_temp / (jpg.stem + origem.suffix.lower())
+        os.symlink(origem, destino)
+
+    return pasta_temp, avisos
+
+
 def processar_projeto(pasta_projeto: Path, cfg: ConfigAutomatizado, settings: app_config.Settings) -> bool:
     """Roda o motor já testado do CAMP Vision sobre a pasta de PREVIEW
     (JPG) de um único projeto. Retorna True se processou com sucesso
@@ -248,45 +317,54 @@ def processar_projeto(pasta_projeto: Path, cfg: ConfigAutomatizado, settings: ap
     # usa o nome da pasta do fundo+projeto pra ficar identificável.
     rotulo_projeto = f"{pasta_projeto.parent.name} / {pasta_projeto.name}"
 
-    config_lote = ConfiguracaoLote(
-        pasta_entrada=pasta_jpg,
-        pasta_saida=pasta_catalogacao,
-        formatos_aceitos=[".jpg", ".jpeg"],
-        quantidade_threads=cfg.quantidade_threads,
-        idiomas_ocr=settings.ocr_idiomas,
-        tamanho_miniatura=settings.miniatura_tamanho_px,
-        qualidade_miniatura=settings.miniatura_qualidade,
-        salvar_miniaturas=settings.salvar_miniaturas,
-        salvar_carimbos=settings.salvar_carimbos,
-        ia_api_key=settings.ia_api_key,
-        ia_modelo=settings.ia_modelo,
-        ia_habilitada=settings.ia_habilitada,
-        caminho_db=str(app_config.DB_PATH),
-        ocr_motor=settings.ocr_motor,
-        deteccao_carimbo_modo=settings.deteccao_carimbo_modo,
-        caminho_modelo_carimbo=settings.caminho_modelo_carimbo,
-        carimbo_regiao_busca=settings.carimbo_regiao_busca,
-        classificacao_modo=settings.classificacao_modo,
-        caminho_modelo_classificacao=settings.caminho_modelo_classificacao,
-        confianca_minima_ml=settings.confianca_minima_ml,
-        tamanho_imagem_ml=settings.tamanho_imagem_ml,
-        codigo_projeto=rotulo_projeto,
-        # --- as duas flags que importam pra não brigar com o padrão CAMP ---
-        renomeacao_habilitada=False,
-        arquivamento_habilitado=False,
-        gravar_metadados_exif=settings.gravar_metadados_exif,
-        deteccao_multiorientacao=settings.deteccao_multiorientacao,
-        nome_projeto=pasta_projeto.name,
-        atribuicao_instituicao=settings.atribuicao_instituicao,
-    )
+    pasta_temp, avisos_resolucao = _preparar_pasta_processamento(pasta_projeto, pasta_jpg)
+    for aviso in avisos_resolucao:
+        logger.info("[resolução] %s", aviso)
 
-    logger.info("=== Processando projeto: %s ===", rotulo_projeto)
     try:
-        processador = ProcessadorLote(config_lote)
-        resultados = processador.executar()
-    except Exception as exc:
-        logger.exception("Falha ao processar projeto %s: %s", rotulo_projeto, exc)
-        return False
+        config_lote = ConfiguracaoLote(
+            pasta_entrada=pasta_temp,
+            pasta_saida=pasta_catalogacao,
+            formatos_aceitos=[".jpg", ".jpeg", ".tif", ".tiff"],
+            quantidade_threads=cfg.quantidade_threads,
+            idiomas_ocr=settings.ocr_idiomas,
+            tamanho_miniatura=settings.miniatura_tamanho_px,
+            qualidade_miniatura=settings.miniatura_qualidade,
+            salvar_miniaturas=settings.salvar_miniaturas,
+            salvar_carimbos=settings.salvar_carimbos,
+            ia_api_key=settings.ia_api_key,
+            ia_modelo=settings.ia_modelo,
+            ia_habilitada=settings.ia_habilitada,
+            caminho_db=str(app_config.DB_PATH),
+            ocr_motor=settings.ocr_motor,
+            deteccao_carimbo_modo=settings.deteccao_carimbo_modo,
+            caminho_modelo_carimbo=settings.caminho_modelo_carimbo,
+            carimbo_regiao_busca=settings.carimbo_regiao_busca,
+            classificacao_modo=settings.classificacao_modo,
+            caminho_modelo_classificacao=settings.caminho_modelo_classificacao,
+            confianca_minima_ml=settings.confianca_minima_ml,
+            tamanho_imagem_ml=settings.tamanho_imagem_ml,
+            codigo_projeto=rotulo_projeto,
+            # --- as duas flags que importam pra não brigar com o padrão CAMP ---
+            renomeacao_habilitada=False,
+            arquivamento_habilitado=False,
+            gravar_metadados_exif=settings.gravar_metadados_exif,
+            deteccao_multiorientacao=settings.deteccao_multiorientacao,
+            nome_projeto=pasta_projeto.name,
+            atribuicao_instituicao=settings.atribuicao_instituicao,
+        )
+
+        logger.info("=== Processando projeto: %s ===", rotulo_projeto)
+        try:
+            processador = ProcessadorLote(config_lote)
+            resultados = processador.executar()
+        except Exception as exc:
+            logger.exception("Falha ao processar projeto %s: %s", rotulo_projeto, exc)
+            return False
+    finally:
+        # A pasta de preparo é só links simbólicos — remover ela nunca
+        # apaga os JPGs/TIFFs de verdade, só desfaz os atalhos.
+        shutil.rmtree(pasta_temp, ignore_errors=True)
 
     sucesso = sum(1 for r in resultados if r.sucesso)
     falhas = sum(1 for r in resultados if not r.sucesso)
