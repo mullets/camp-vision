@@ -76,6 +76,12 @@ PALAVRAS_CHAVE_CARIMBO = (
     "RUA", "AV", "AVENIDA", "ALAMEDA", "TELEFONE", "TEL", "FONE",
     "LTDA", "S.A", "S/A", "EIRELI", "ENG", "ARQ", "CONSTR", "EMPR",
     "IMOB", "URBANISMO", "ENGENHARIA", "N.", "Nº", "EX.",
+    # RESIDENCIA: adicionada depois de observar um carimbo real do
+    # acervo (fundo Burle Marx, projeto ligado à Residência Hans Broos)
+    # que não batia com nenhuma palavra da lista original — apesar de
+    # ser, de longe, a palavra mais comum nos títulos de projeto deste
+    # acervo específico (majoritariamente residências unifamiliares).
+    "RESIDENCIA",
 )
 
 _PADRAO_TELEFONE = re.compile(r"\b\d{3,5}[\s.\-]?\d{4}\b")
