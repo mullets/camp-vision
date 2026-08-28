@@ -1,0 +1,75 @@
+# ============================================================
+# CAMP Vision — dependências essenciais (instalação padrão)
+# ============================================================
+# Pensado para rodar em qualquer Mac, incluindo modelos antigos
+# (ex.: Mac Pro 5,1 / 6,1) sem GPU e sem instruções de CPU
+# recentes (AVX/AVX2). A interface usa Tkinter (embutido no
+# Python) em vez de Qt/PySide6, e o OCR usa Tesseract em vez de
+# PaddleOCR — ambos evitam exigências de hardware que travam em
+# CPUs mais antigas. Veja requirements-ml.txt para os extras
+# opcionais de detecção/classificação por modelo treinado
+# (recomendado apenas em Macs mais novos).
+
+# --- Processamento de imagem ---
+# Versão fixada (não usamos >=) porque releases muito recentes do
+# opencv-python-headless às vezes ainda não têm wheel pré-compilada
+# para todas as combinações de Python/macOS — nesse caso o pip tenta
+# compilar do zero (lento e pode falhar). Esta versão tem wheels
+# amplamente disponíveis para macOS (Intel e Apple Silicon).
+opencv-python-headless==4.10.0.84
+# numpy fixado em <2: já validamos que essa faixa funciona tanto com
+# o opencv-python-headless==4.10.0.84 quanto com o torch==2.2.2 (o
+# teto disponível para Mac Intel). Sem esse teto explícito, instalar
+# outra dependência depois (ex.: requirements-ml.txt) pode fazer o
+# pip silenciosamente atualizar o numpy para 2.x e quebrar o torch —
+# já aconteceu na prática.
+numpy>=1.26.0,<2.0
+Pillow>=10.3.0
+tifffile>=2024.5.22
+# imagecodecs: o tifffile delega pra ele a DECODIFICAÇÃO de TIFFs com
+# compressão LZW, JPEG ou Deflate (praticamente todo TIFF digitalizado
+# de acervo usa algum desses) — sem isso, tifffile abre o arquivo mas
+# falha ao ler cada página com "<COMPRESSION.LZW: 5> requires the
+# 'imagecodecs' package". FIXADO em versão exata (não piso aberto):
+# versões mais recentes (ex. 2026.x) já exigem numpy>=2.0, o que força
+# o pip a atualizar o numpy e quebra o pin acima (já aconteceu na
+# prática — ver comentário do numpy). 2024.6.1 é de antes da virada
+# do ecossistema pra numpy 2.
+imagecodecs==2024.6.1
+
+# --- OCR (requer o binário 'tesseract' instalado via Homebrew) ---
+pytesseract>=0.3.10
+
+# --- IA / OpenAI (opcional — sistema funciona sem, via fallback por regras) ---
+openai>=1.30.0
+
+# --- Banco de dados (SQLAlchemy é puro Python, sem extensões compiladas) ---
+SQLAlchemy>=2.0.30
+
+# --- Exportação (openpyxl é puro Python; CSV/JSON usam a biblioteca padrão) ---
+openpyxl>=3.1.2
+
+# --- Empacotamento (opcional, só para gerar o .app) ---
+pyinstaller>=6.6.0
+
+# --- Testes (opcional, apenas para desenvolvimento) ---
+pytest>=8.2.0
+pytest-cov>=5.0.0
+
+# Observações:
+# - Similaridade textual (correção inteligente de nomes) usa
+#   `difflib`, da biblioteca padrão — sem dependência extra.
+# - A interface gráfica usa `tkinter`, também da biblioteca
+#   padrão — em macOS, já vem com o instalador do python.org;
+#   se você instalou o Python via Homebrew, garanta o tcl-tk:
+#   brew install python-tk
+
+# Leitura de PDFs. Escolhido por não depender do poppler (como o
+# pdf2image) e por distribuir wheels prontas.
+#
+# ATENÇÃO ao teto de versão: a partir da série 5 o projeto deixou de
+# publicar wheel para Mac Intel com macOS 12, e o pip cai para compilar
+# do código-fonte — o que exige baixar um binário do pdfium e falha nas
+# máquinas do acervo (erro de certificado SSL). A série 4 tem wheel
+# pronta e instala direto.
+pypdfium2>=4.25,<5

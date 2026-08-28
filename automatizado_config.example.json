@@ -1,0 +1,6 @@
+{
+  "qnap_acervos_path": "/mnt/qnap/acervos",
+  "intervalo_verificacao_segundos": 60,
+  "quantidade_threads": 2,
+  "timeout_qnap_travado_horas": 6.0
+}

@@ -1,0 +1,21 @@
+[Unit]
+Description=CAMP Vision - modo automatizado (catalogacao headless)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Ajuste o usuário/pasta conforme a instalação real:
+User=campvision
+WorkingDirectory=/home/campvision/campvision
+ExecStart=/home/campvision/campvision/.venv/bin/python automatizado.py
+Restart=on-failure
+RestartSec=15
+
+# Evita que uma falha em loop rápido (ex.: QNAP sempre fora do ar)
+# reinicie sem parar, consumindo CPU à toa.
+StartLimitIntervalSec=600
+StartLimitBurst=5
+
+[Install]
+WantedBy=multi-user.target

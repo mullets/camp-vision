@@ -1,0 +1,15 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.coverage
+build/
+dist/
+*.spec.bak
+logs/*.log
+*.sqlite3
+.DS_Store
+catalogacao_saida/
+
+# Configurações reais (o repo só guarda os .example)
+automatizado_config.json

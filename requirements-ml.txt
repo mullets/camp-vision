@@ -1,0 +1,46 @@
+# ============================================================
+# CAMP Vision — extras opcionais (hardware mais recente)
+# ============================================================
+# Instale por cima do requirements.txt normal SOMENTE se seu Mac
+# tiver CPU com AVX2 (Haswell/2013 em diante — a maioria dos Macs
+# Intel a partir de ~2015, e todo Apple Silicon) e, de preferência,
+# GPU compatível (Apple Silicon via MPS, ou NVIDIA via CUDA).
+#
+#   pip install -r requirements.txt
+#   pip install -r requirements-ml.txt
+#
+# Em Mac Pro 5,1 (Xeon Westmere) ou 6,1 (Xeon Ivy Bridge-EP), estes
+# pacotes tendem a falhar ou travar com erro de "illegal
+# instruction" — não instale nesses modelos. O sistema funciona
+# perfeitamente sem eles, usando as estratégias padrão (heurística
+# de contornos + classificação por regras).
+
+# --- Detecção de carimbo e classificação por modelo treinado ---
+# Repete o teto de numpy do requirements.txt aqui de propósito: sem
+# isso, instalar paddlepaddle/paddleocr pode fazer o pip escolher
+# numpy>=2 (silenciosamente, sem avisar) e quebrar o torch — já
+# aconteceu na prática. Se o paddleocr genuinamente exigir numpy>=2,
+# o pip vai dar erro de conflito aqui (mais seguro que quebrar
+# silenciosamente depois) — nesse caso, paddleocr e torch não são
+# instaláveis juntos nesta máquina, e o caminho é usar só um dos dois.
+numpy>=1.26.0,<2.0
+ultralytics>=8.2.0
+# ATENÇÃO: o ultralytics puxa "opencv-python" (a versão "normal",
+# com interface gráfica) como dependência própria — mas o
+# requirements.txt principal já instala "opencv-python-headless".
+# Os dois pacotes usam o MESMO nome de módulo (cv2) e colidem no
+# disco; ter os dois instalados ao mesmo tempo corrompe o cv2 (ele
+# importa mas fica faltando funcionalidade, ex.: cv2.__version__
+# sumindo). SEMPRE rode isto depois de instalar/atualizar o
+# ultralytics:
+#   pip uninstall opencv-python opencv-python-headless -y
+#   pip install "opencv-python-headless==4.10.0.84"
+# ATENÇÃO: a PyPI não publica torch acima de 2.2.2 para Mac Intel
+# (a PyTorch parou de lançar build nova para essa plataforma) — não
+# force uma versão maior aqui, ou o pip vai falhar em Mac Intel.
+torch>=2.0.0,<2.3.0
+torchvision>=0.15.0,<0.18.0
+
+# --- OCR alternativo de maior precisão (requer os pacotes acima) ---
+paddlepaddle>=2.6.1
+paddleocr>=2.7.3

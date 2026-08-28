@@ -1,0 +1,10 @@
+[Unit]
+Description=CAMP Vision - verifica e aplica atualizacoes do git
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=campvision
+WorkingDirectory=/home/campvision/campvision
+ExecStart=/home/campvision/campvision/deploy.sh
