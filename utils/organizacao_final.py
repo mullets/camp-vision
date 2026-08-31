@@ -106,7 +106,12 @@ def _arquiteto_dominante(catalogacao: list[dict]) -> str:
     grupos: dict[str, Counter] = {}
     for valor in valores:
         grupos.setdefault(_normalizar(valor), Counter())[valor] += 1
-    grupo = max(grupos.values(), key=sum)
+    # sum(counter) soma as CHAVES do Counter (os nomes, texto) porque
+    # iterar um dict/Counter percorre as chaves por padrão -- por isso
+    # dava "unsupported operand type(s) for +: 'int' and 'str'". O que
+    # queremos é o grupo com mais OCORRÊNCIAS, ou seja, a soma dos
+    # VALORES (as contagens).
+    grupo = max(grupos.values(), key=lambda c: sum(c.values()))
     return grupo.most_common(1)[0][0]
 
 
