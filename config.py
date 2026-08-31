@@ -21,7 +21,7 @@ logger = logging.getLogger("campvision.config")
 APP_NAME = "CAMP Vision"
 APP_VERSION = "0.1.0"
 # Identificador de build — muda a cada entrega.
-VERSAO_BUILD = "2026-08-31-70-gpt"
+VERSAO_BUILD = "2026-08-31-71-gpt"
 
 USER_DIR = Path.home() / ".campvision"
 CONFIG_PATH = USER_DIR / "config.json"
