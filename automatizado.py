@@ -12,24 +12,26 @@ não duplica nenhuma lógica de OCR, IA, classificação ou exportação.
 A única diferença real em relação ao app.py (GUI) é:
 
   1. Não há interface gráfica — o loop principal fica de olho no QNAP.
-  2. Renomeação e arquivamento em pasta (ano/projeto) ficam DESLIGADOS
-     — os arquivos já chegam renomeados e organizados no padrão CAMP
-     (Fundo/Projeto/Série/Tipo) feito pela estação Windows; o CAMP
-     Vision aqui só CATALOGA (OCR + IA + classificação + EXIF +
-     exportação), sem tocar em nome nem em pasta.
-  3. Só processa a pasta "03 - Preview (JPG)" de cada projeto — os
-     TIFFs de preservação nunca são tocados por este processo.
+  2. Renomeação dos arquivos fica DESLIGADA durante a catalogação — os
+     arquivos já chegam com o padrão CAMP aplicado pela estação Windows.
+  3. Só processa a pasta "03 - Preview (JPG)" de cada projeto. Quando o
+     JPG está abaixo do piso de resolução, usa o TIFF correspondente
+     apenas para a análise, sem copiar nem alterar o original.
+  4. Depois da catalogação, normaliza a estrutura interna do projeto e
+     move a pasta inteira para o fundo correto, reaproveitando o fundo
+     existente ou criando-o com o arquiteto catalogado quando necessário.
 
-Fluxo (reaproveita o semáforo já usado entre Windows/QNAP/Mac):
+Fluxo:
 
     status.json == "enviado_windows"
         -> roda o lote (OCR/IA/classificação/EXIF/exportação)
-        -> calcula nível de confiança por prancha (ver _calcular_nivel)
+        -> calcula nível de confiança por prancha
+        -> normaliza/move o projeto para o fundo correto
         -> status.json = "campvision_concluido"
 
 Uso:
     python automatizado.py                  # roda em loop contínuo
-    python automatizado.py --uma-vez         # processa o que houver e sai
+    python automatizado.py --uma-vez       # processa o que houver e sai
 """
 
 from __future__ import annotations
@@ -58,6 +60,7 @@ from ocr.motor import criar_motor_ocr
 from scanner.detector_carimbo import criar_detector
 from scanner.leitor_imagem import RESOLUCAO_MINIMA_PIXELS_SEM_DPI
 from scanner.lote import ConfiguracaoLote, ProcessadorLote
+from utils.organizacao_final import organizar_projeto_catalogado
 
 # Mesmos nomes de pasta definidos no padrão CAMP (ver sistema_windows.py,
 # peça Windows) — precisam ficar em sincronia manual entre os dois
@@ -106,13 +109,10 @@ def carregar_config_automatizado() -> ConfigAutomatizado:
 
 
 # ============================================================================
-# NÍVEL DE CONFIANÇA (adaptação honesta do esquema de 4 níveis para o
-# que realmente temos disponível sem custo extra: confiança média de
-# OCR por palavra — real e contínua — penalizada quando a IA não pôde
-# ser usada e o sistema caiu para o extrator por regras)
+# NÍVEL DE CONFIANÇA
 # ============================================================================
 
-PENALIDADE_SEM_IA = 0.7  # multiplicador aplicado quando confianca_ia == 0.4 (fallback)
+PENALIDADE_SEM_IA = 0.7
 
 
 def _calcular_nivel(confianca_ocr: Optional[float], confianca_ia: Optional[float], observacoes: Optional[str]) -> dict:
@@ -123,7 +123,7 @@ def _calcular_nivel(confianca_ocr: Optional[float], confianca_ia: Optional[float
         return {"score": 0.0, "nivel": "revisao_manual"}
 
     score = confianca_ocr
-    if confianca_ia is not None and confianca_ia < 0.9:  # 0.4 = usou fallback de regras, não IA
+    if confianca_ia is not None and confianca_ia < 0.9:
         score *= PENALIDADE_SEM_IA
 
     if score >= 0.90:
@@ -137,14 +137,7 @@ def _calcular_nivel(confianca_ocr: Optional[float], confianca_ia: Optional[float
 
 
 def gerar_niveis_confianca(pasta_catalogacao: Path) -> Optional[Path]:
-    """Lê o catalogacao.json que o Exportador já escreveu e produz um
-    arquivo COMPANHEIRO (niveis_confianca.json) com o nível por
-    prancha — não modifica o catalogacao.json original do CAMP Vision.
-
-    IMPORTANTE: o catalogacao.json usa as MESMAS chaves em português
-    (Title Case) do CSV/XLSX — ver exportacao/exportador.py:
-    RegistroExportacao.para_linha_csv() — não os nomes internos do
-    dataclass (que são em minúsculo/snake_case)."""
+    """Lê o catalogacao.json e produz o arquivo companheiro de níveis."""
     caminho_json = pasta_catalogacao / "catalogacao.json"
     if not caminho_json.exists():
         logger.warning("catalogacao.json não encontrado em %s — pulando cálculo de níveis.", pasta_catalogacao)
@@ -184,7 +177,7 @@ def gerar_niveis_confianca(pasta_catalogacao: Path) -> Optional[Path]:
 
 
 # ============================================================================
-# DESCOBERTA DE PROJETOS PENDENTES NO QNAP (mesma estrutura do padrão CAMP)
+# DESCOBERTA DE PROJETOS PENDENTES NO QNAP
 # ============================================================================
 
 def _ler_status(pasta_projeto: Path) -> Optional[dict]:
@@ -210,9 +203,7 @@ def _escrever_status(pasta_projeto: Path, etapa: str) -> None:
 
 
 def listar_projetos_pendentes(qnap_acervos_path: Path) -> list[Path]:
-    """Anda dois níveis (Fundo/ -> Projeto/), igual ao que a peça
-    Windows já faz — reaproveita a mesma leitura de disco, sem precisar
-    de nenhuma API entre os dois lados."""
+    """Anda dois níveis (Fundo/ -> Projeto/), igual ao padrão CAMP."""
     pendentes = []
     if not qnap_acervos_path.exists():
         logger.error("Pasta do QNAP não encontrada/montada: %s", qnap_acervos_path)
@@ -235,24 +226,7 @@ def listar_projetos_pendentes(qnap_acervos_path: Path) -> list[Path]:
 # ============================================================================
 
 def _preparar_pasta_processamento(pasta_projeto: Path, pasta_jpg: Path) -> tuple[Path, list[str]]:
-    """Monta uma pasta TEMPORÁRIA de trabalho com um link simbólico por
-    prancha — normalmente apontando pro JPG, mas trocado pelo TIFF de
-    preservação correspondente quando o JPG está abaixo do piso de
-    resolução que o próprio motor do CAMP Vision já usa para decidir se
-    vale soltar o aviso de 'resolução possivelmente baixa'.
-
-    Por quê: os JPGs desta estação já saem reduzidos a 1/3 da resolução
-    do TIFF original (ver sistema_windows.py) e sem DPI gravado — então
-    batem nesse piso quase sempre para pranchas fisicamente menores.
-    Quando isso acontece, sabemos exatamente onde está o TIFF de
-    altíssima qualidade da mesma prancha (mesmo nome, na pasta irmã
-    '01 - Arquivo Arquivístico (TIFF)') — então usamos ele só para
-    ESTA análise, sem nunca copiar (200MB+ cada) nem tocar no arquivo
-    original de nenhum dos dois lados. A pasta retornada é só links
-    simbólicos e deve ser apagada depois de usar (ver `finally` em
-    `processar_projeto`).
-
-    Retorna (pasta_temporaria, lista_de_avisos_para_log)."""
+    """Monta uma pasta temporária de links simbólicos para análise."""
     pasta_tif = pasta_projeto / SERIE_PADRAO / TIPO_ARQUIVISTICO
     pasta_temp = Path(tempfile.mkdtemp(prefix="campvision_prep_"))
     avisos = []
@@ -290,9 +264,6 @@ def _preparar_pasta_processamento(pasta_projeto: Path, pasta_jpg: Path) -> tuple
         if motivo:
             avisos.append(motivo)
 
-        # O link fica com o MESMO nome-base do JPG (só muda a extensão
-        # quando vira TIFF) — assim o resultado exportado continua
-        # identificável com o padrão CAMP já usado no nome do arquivo.
         destino = pasta_temp / (jpg.stem + origem.suffix.lower())
         os.symlink(origem, destino)
 
@@ -300,10 +271,7 @@ def _preparar_pasta_processamento(pasta_projeto: Path, pasta_jpg: Path) -> tuple
 
 
 def processar_projeto(pasta_projeto: Path, cfg: ConfigAutomatizado, settings: app_config.Settings) -> bool:
-    """Roda o motor já testado do CAMP Vision sobre a pasta de PREVIEW
-    (JPG) de um único projeto. Retorna True se processou com sucesso
-    (mesmo que algumas pranchas individuais tenham falhado — falha
-    parcial não é falha do projeto inteiro)."""
+    """Cataloga e, ao final, organiza o projeto no fundo correto."""
     pasta_jpg = pasta_projeto / SERIE_PADRAO / TIPO_PREVIEW
     if not pasta_jpg.exists():
         logger.error("Pasta de preview não encontrada em %s — pulando.", pasta_projeto)
@@ -311,10 +279,6 @@ def processar_projeto(pasta_projeto: Path, cfg: ConfigAutomatizado, settings: ap
 
     pasta_catalogacao = pasta_projeto / "catalogacao"
     pasta_catalogacao.mkdir(parents=True, exist_ok=True)
-
-    # codigo_projeto aqui é só um rótulo pro CSV/JSON (renomeação está
-    # desligada, então não afeta nome nem pasta de arquivo nenhum) —
-    # usa o nome da pasta do fundo+projeto pra ficar identificável.
     rotulo_projeto = f"{pasta_projeto.parent.name} / {pasta_projeto.name}"
 
     pasta_temp, avisos_resolucao = _preparar_pasta_processamento(pasta_projeto, pasta_jpg)
@@ -345,7 +309,6 @@ def processar_projeto(pasta_projeto: Path, cfg: ConfigAutomatizado, settings: ap
             confianca_minima_ml=settings.confianca_minima_ml,
             tamanho_imagem_ml=settings.tamanho_imagem_ml,
             codigo_projeto=rotulo_projeto,
-            # --- as duas flags que importam pra não brigar com o padrão CAMP ---
             renomeacao_habilitada=False,
             arquivamento_habilitado=False,
             gravar_metadados_exif=settings.gravar_metadados_exif,
@@ -362,8 +325,6 @@ def processar_projeto(pasta_projeto: Path, cfg: ConfigAutomatizado, settings: ap
             logger.exception("Falha ao processar projeto %s: %s", rotulo_projeto, exc)
             return False
     finally:
-        # A pasta de preparo é só links simbólicos — remover ela nunca
-        # apaga os JPGs/TIFFs de verdade, só desfaz os atalhos.
         shutil.rmtree(pasta_temp, ignore_errors=True)
 
     sucesso = sum(1 for r in resultados if r.sucesso)
@@ -371,6 +332,24 @@ def processar_projeto(pasta_projeto: Path, cfg: ConfigAutomatizado, settings: ap
     logger.info("Projeto %s: %d prancha(s) catalogada(s), %d falha(s).", rotulo_projeto, sucesso, falhas)
 
     gerar_niveis_confianca(pasta_catalogacao)
+
+    # Só considera o projeto concluído depois de colocá-lo na estrutura
+    # definitiva. Se a organização falhar, ele continua com
+    # 'enviado_windows' e será tentado novamente na próxima rodada.
+    destino_final = organizar_projeto_catalogado(
+        pasta_projeto,
+        Path(cfg.qnap_acervos_path),
+        db_path=str(app_config.DB_PATH),
+    )
+    if destino_final is None:
+        logger.warning(
+            "Projeto %s foi catalogado, mas NÃO foi organizado no arquivo definitivo; "
+            "continua 'enviado_windows' para nova tentativa.",
+            pasta_projeto.name,
+        )
+        return False
+
+    _escrever_status(destino_final, ETAPA_SAIDA)
     return True
 
 
@@ -391,16 +370,10 @@ def executar_uma_rodada(cfg: ConfigAutomatizado, settings: app_config.Settings) 
     logger.info("%d projeto(s) pendente(s) encontrado(s).", len(pendentes))
     processados = 0
     for pasta_projeto in pendentes:
-        # A trava existe SÓ enquanto um projeto está sendo processado —
-        # é o que o script de deploy confere antes de reiniciar o
-        # serviço, pra nunca cortar um lote pela metade. Fica fora do
-        # try/finally seguinte de propósito: mesmo que dê erro, o
-        # finally sempre remove a trava.
         ARQUIVO_TRAVA.write_text(str(time.time()), encoding="utf-8")
         try:
             ok = processar_projeto(pasta_projeto, cfg, settings)
             if ok:
-                _escrever_status(pasta_projeto, ETAPA_SAIDA)
                 processados += 1
             else:
                 logger.warning(
@@ -409,8 +382,6 @@ def executar_uma_rodada(cfg: ConfigAutomatizado, settings: app_config.Settings) 
                     pasta_projeto.name,
                 )
         except Exception as exc:
-            # Resiliência: um projeto com problema nunca pode travar os
-            # outros pendentes na mesma rodada.
             logger.exception("Erro inesperado processando %s: %s", pasta_projeto, exc)
         finally:
             ARQUIVO_TRAVA.unlink(missing_ok=True)
@@ -449,9 +420,6 @@ def main() -> int:
         try:
             executar_uma_rodada(cfg, settings)
         except Exception as exc:
-            # Nunca deixa o loop principal morrer por causa de um erro
-            # de uma rodada — o systemd também reinicia se isso escapar,
-            # mas é melhor logar e tentar de novo sozinho primeiro.
             logger.exception("Erro na rodada de verificação: %s", exc)
         time.sleep(cfg.intervalo_verificacao_segundos)
 
