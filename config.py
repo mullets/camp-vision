@@ -5,9 +5,7 @@ Configuração central do CAMP Vision.
 
 Centraliza todos os parâmetros configuráveis do sistema: caminhos,
 credenciais, parâmetros de processamento de imagem, OCR, IA e
-exportação. As configurações são persistidas em um arquivo JSON no
-diretório de configuração do usuário (~/.campvision/config.json) e
-podem ser editadas pela tela de Configurações da interface gráfica.
+exportação.
 """
 
 from __future__ import annotations
@@ -17,13 +15,12 @@ import os
 import logging
 from dataclasses import dataclass, asdict, field
 from pathlib import Path
-from typing import Optional
 
 logger = logging.getLogger("campvision.config")
 
 APP_NAME = "CAMP Vision"
 APP_VERSION = "0.1.0"
-# Identificador de build — muda a cada vez que uma correção é entregue.
+# Identificador de build — muda a cada entrega.
 VERSAO_BUILD = "2026-08-31-70-gpt"
 
 USER_DIR = Path.home() / ".campvision"
@@ -93,13 +90,12 @@ def _migrar(settings: Settings) -> Settings:
     faltando = [f for f in Settings().formatos_aceitos if f.lower() not in formatos_atuais]
     if faltando:
         settings.formatos_aceitos = list(settings.formatos_aceitos) + faltando
-        logger.info("Formatos de arquivo recém-suportados adicionados à configuração: %s", ", ".join(faltando))
         alterado = True
     if settings.renomeacao_padrao in _PADROES_RENOMEACAO_ANTIGOS:
         settings.renomeacao_padrao = Settings().renomeacao_padrao
         alterado = True
     if settings.arquivamento_padrao_pastas in _PADROES_ARQUIVAMENTO_ANTIGOS:
-        settings.arquivamento_padras_pastas = Settings().arquivamento_padrao_pastas
+        settings.arquivamento_padrao_pastas = Settings().arquivamento_padrao_pastas
         alterado = True
     if alterado:
         salvar_configuracoes(settings)
