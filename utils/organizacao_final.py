@@ -135,16 +135,22 @@ def _canonizar_arquiteto(arquiteto: str, db_path: Optional[str]) -> str:
 
 
 def _encontrar_raiz_arquivos(qnap_path: Path) -> Path:
-    """Encontra o diretório 'Arquivos' na cadeia do QNAP.
+    """As pastas de Fundo (ex.: 'F022 - MSL - Marklen Slan') vivem
+    DIRETAMENTE dentro de qnap_acervos_path — é essa a convenção usada
+    em todo o resto do sistema (sistema_windows.py cria os fundos ali;
+    automatizado.listar_projetos_pendentes() também procura ali,
+    andando exatamente dois níveis: Fundo/Projeto).
 
-    Isso permite que o mesmo código funcione tanto com
-    /.../Arquivos/99 - Saida Scanner Contex HD quanto com uma pasta de
-    entrada configurada diretamente em /.../Arquivos.
-    """
-    for ancestral in (qnap_path, *qnap_path.parents):
-        if ancestral.name.strip().lower() == "arquivos":
-            return ancestral
-    return qnap_path.parent
+    Versão anterior desta função subia a árvore procurando uma pasta
+    chamada literalmente "Arquivos", partindo da premissa de que
+    qnap_acervos_path seria uma pasta de saída temporária do scanner e
+    o arquivo definitivo ficaria um nível acima. Isso não bate com a
+    estrutura real: por exemplo, com qnap_acervos_path apontando para
+    ".../Arquivos/99 - Saida Scanner Contex HD", a função antiga
+    devolvia ".../Arquivos" — um nível ACIMA de onde os fundos de
+    verdade estão — fazendo _encontrar_ou_criar_fundo nunca achar os
+    fundos já existentes."""
+    return qnap_path
 
 
 def _encontrar_ou_criar_fundo(
